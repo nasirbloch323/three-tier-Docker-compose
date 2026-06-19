@@ -310,3 +310,271 @@ This project demonstrates a complete, real-world DevOps workflow: containerizing
 ## 👤 Author
 
 Maintained as part of a hands-on DevOps learning project (MERN + Docker + AWS EC2).
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+# 🚀 Secure Deployment of a Full-Stack MERN App using Docker, Docker Compose & AWS EC2
+
+A production-style deployment of a **MERN stack** (MongoDB, Express/Node.js, React) application using **Docker multi-stage builds**, **Alpine base images**, **non-root containers**, and **healthchecks** — orchestrated with **Docker Compose** and deployed on an **AWS EC2** instance.
+
+---
+
+## 📌 Industry Scenario
+
+A travel-tech startup wants to containerize and securely deploy their web application (React frontend, Node.js backend, MongoDB database) on an AWS EC2 instance. The goal is to apply Docker best practices — multi-stage builds for small image sizes, security hardening with non-root users, and monitoring with healthchecks — using Docker Compose.
+
+## 🎯 Objectives
+
+- Clone and containerize the app (React + Node.js + MongoDB)
+- Use Alpine images and Docker multi-stage builds
+- Apply Docker security best practices (non-root user, minimal images, healthchecks)
+- Deploy and expose the app securely on AWS EC2 via Docker Compose
+
+## 🛠️ Tech Stack
+
+| Layer      | Technology            |
+|------------|------------------------|
+| Frontend   | React (served via `serve`) |
+| Backend    | Node.js / Express      |
+| Database   | MongoDB 6.0             |
+| Container  | Docker (multi-stage, Alpine) |
+| Orchestration | Docker Compose       |
+| Hosting    | AWS EC2 (Ubuntu)        |
+
+---
+
+## 📂 Project Structure
+
+```
+three-tier-app/
+├── backend/
+│   └── Dockerfile
+├── frontend/
+│   └── Dockerfile
+└── docker-compose.yml
+```
+
+---
+
+## ✅ Step-by-Step Implementation
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Umair1012/three-tier-app.git
+cd three-tier-app
+```
+
+### 2. Backend Dockerfile (Node.js — Multi-Stage & Alpine)
+
+`backend/Dockerfile`
+
+```dockerfile
+# --- Stage 1: Build ---
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+
+# --- Stage 2: Production ---
+FROM node:18-alpine
+RUN adduser -S appuser
+WORKDIR /app
+COPY --from=builder /app .
+USER appuser
+EXPOSE 5000
+CMD ["node", "server.js"]
+```
+
+### 3. Frontend Dockerfile (React — Multi-Stage & Alpine)
+
+`frontend/Dockerfile`
+
+```dockerfile
+# --- Stage 1: Build React app ---
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# --- Stage 2: Serve with 'serve' ---
+FROM node:18-alpine
+RUN npm install -g serve
+COPY --from=builder /app/build /build
+RUN adduser -S appuser
+USER appuser
+EXPOSE 3000
+CMD ["serve", "-s", "/build"]
+```
+
+### 4. MongoDB
+
+No custom Dockerfile needed — handled directly via the official `mongo:6.0` image in Docker Compose.
+
+### 5. Docker Compose File
+
+`docker-compose.yml`
+
+```yaml
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongo
+    env_file:
+      - ./backend/.env
+    user: "1000:1000"
+    read_only: true
+    restart: always
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    env_file:
+      - ./frontend/.env
+    user: "1000:1000"
+    read_only: true
+    restart: always
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mongo:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    restart: always
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mongo-data:
+
+networks:
+  app-network:
+    driver: bridge
+```
+
+> ⚠️ **Note:** The original source doc had a mismatch — frontend was mapped to port `3000` in Compose but referenced as `8000` in the verification/security-group steps, and the Mongo healthcheck had no `test` command. Both are fixed above for consistency — adjust the frontend port back to `8000:3000` if that's what your security group/CDN expects.
+
+### 6. Launch EC2 & Install Docker
+
+**Requirements:**
+- Ubuntu EC2 instance (`t2.medium` or higher)
+- Security group allows inbound ports: `22`, `3000`, `5000`, `27017`
+
+```bash
+# Connect to EC2
+ssh -i your-key.pem ubuntu@your-ec2-ip
+
+# Install Docker & Docker Compose
+sudo apt update && sudo apt install -y docker.io docker-compose
+sudo usermod -aG docker ubuntu
+newgrp docker
+
+
+
+### 7. Build & Run with Docker Compose
+
+```bash
+docker-compose up --build -d
+```
+
+**Reset everything (if needed):**
+
+```bash
+sudo docker-compose down --volumes --remove-orphans
+sudo docker-compose build
+sudo docker-compose up -d
+```
+
+**Debug failing services:**
+
+```bash
+docker-compose logs frontend
+docker-compose logs backend
+```
+
+### 8. Verify Deployment
+
+| Service        | URL                                |
+|-----------------|-------------------------------------|
+| Frontend        | `http://<EC2-IP>:3000`             |
+| Backend API     | `http://<EC2-IP>:5000`             |
+| MongoDB         | Internal only — `mongo:27017`      |
+
+### 9. AWS EC2 Security Group Rules
+
+From the AWS Console → **Inbound Rules → Add custom TCP:**
+
+- `3000` (React frontend)
+- `5000` (Node.js API)
+- `27017` (MongoDB — debugging/dev only)
+
+> 🛑 **Production tip:** Restrict MongoDB access to the backend container only — never expose `27017` publicly in production.
+
+---
+
+## 🔐 Docker Security Best Practices Applied
+
+- ✅ Multi-stage builds (smaller images, no leftover build tools)
+- ✅ Alpine-based minimal images (reduced attack surface)
+- ✅ Non-root users in every container
+- ✅ Healthcheck endpoints for backend & MongoDB
+- ✅ Read-only root filesystem on app containers
+- ✅ Isolated bridge network for service-to-service communication
+- ✅ Port-specific security group rules
+
+---
+
+## 🎯 Conclusion
+
+This project demonstrates end-to-end Dockerization and deployment of a production-ready, full-stack MERN application using Docker best practices on AWS. Multi-stage builds and Alpine images minimize the attack surface, while healthchecks and non-root users improve security and observability — reflecting how modern DevOps teams ship microservices securely on cloud infrastructure.
+
+---
+
+## 📜 License
+
+This project is for educational/demo purposes as part of a DevOps learning series.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
